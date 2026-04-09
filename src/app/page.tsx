@@ -493,6 +493,18 @@ function SessionScreen({
   const [totalTime, setTotalTime] = useState(0);
   const [setTime, setSetTime] = useState(0);
   const startedAtRef = useRef(new Date().toISOString());
+  const lastSoundRef = useRef(-1);
+
+  const playRandomSound = useCallback(() => {
+    const total = 6;
+    let pick: number;
+    do {
+      pick = Math.floor(Math.random() * total) + 1;
+    } while (pick === lastSoundRef.current && total > 1);
+    lastSoundRef.current = pick;
+    const audio = new Audio(`/sounds/${pick}.mpeg`);
+    audio.play().catch(() => {});
+  }, []);
 
   // Total timer
   useEffect(() => {
@@ -517,6 +529,7 @@ function SessionScreen({
     const isLastExercise = exerciseIdx >= workout.exercises.length - 1;
 
     if (isLastSet && isLastExercise) {
+      playRandomSound();
       onComplete({
         id: uuid(),
         workoutName: workout.name,
@@ -538,9 +551,10 @@ function SessionScreen({
       }
       setIsResting(false);
     } else {
+      playRandomSound();
       setIsResting(true);
     }
-  }, [setIdx, totalSets, exerciseIdx, workout, isResting, onComplete, totalTime]);
+  }, [setIdx, totalSets, exerciseIdx, workout, isResting, onComplete, totalTime, playRandomSound]);
 
   if (!currentExercise) return null;
 
