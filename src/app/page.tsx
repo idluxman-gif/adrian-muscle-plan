@@ -297,7 +297,15 @@ function BuilderScreen({
   };
 
   const addSet = (exId: string) => {
-    updateExercise(exId, (ex) => ({ ...ex, sets: [...ex.sets, newSet()] }));
+    updateExercise(exId, (ex) => {
+      const lastSet = ex.sets[ex.sets.length - 1];
+      const ns: WorkoutSet = {
+        id: uuid(),
+        reps: lastSet ? lastSet.reps : 10,
+        weight: lastSet ? lastSet.weight : 0,
+      };
+      return { ...ex, sets: [...ex.sets, ns] };
+    });
   };
 
   const removeSet = (exId: string, setId: string) => {
