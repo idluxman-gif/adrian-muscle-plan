@@ -492,10 +492,24 @@ function SessionScreen({
   const [isResting, setIsResting] = useState(false);
   const [totalTime, setTotalTime] = useState(0);
   const [setTime, setSetTime] = useState(0);
+  const [soundOn, setSoundOn] = useState(() => {
+    if (typeof window === "undefined") return true;
+    const saved = localStorage.getItem("adrian_sound");
+    return saved !== "off";
+  });
   const startedAtRef = useRef(new Date().toISOString());
   const lastSoundRef = useRef(-1);
 
+  const toggleSound = useCallback(() => {
+    setSoundOn((prev) => {
+      const next = !prev;
+      localStorage.setItem("adrian_sound", next ? "on" : "off");
+      return next;
+    });
+  }, []);
+
   const playRandomSound = useCallback(() => {
+    if (!soundOn) return;
     const total = 6;
     let pick: number;
     do {
@@ -504,7 +518,7 @@ function SessionScreen({
     lastSoundRef.current = pick;
     const audio = new Audio(`/sounds/${pick}.mpeg`);
     audio.play().catch(() => {});
-  }, []);
+  }, [soundOn]);
 
   // Total timer
   useEffect(() => {
@@ -572,7 +586,9 @@ function SessionScreen({
             </h1>
             <p className="text-sm text-gray-400">{formatTime(totalTime)}</p>
           </div>
-          <div className="w-8" />
+          <button onClick={toggleSound} className="p-2 text-gray-400">
+            {soundOn ? <SoundOnIcon /> : <SoundOffIcon />}
+          </button>
         </div>
       </div>
 
@@ -840,6 +856,25 @@ function XIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M18 6L6 18M6 6l12 12" />
+    </svg>
+  );
+}
+
+function SoundOnIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M11 5L6 9H2v6h4l5 4V5z" />
+      <path d="M19.07 4.93a10 10 0 010 14.14M15.54 8.46a5 5 0 010 7.07" />
+    </svg>
+  );
+}
+
+function SoundOffIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M11 5L6 9H2v6h4l5 4V5z" />
+      <line x1="23" y1="9" x2="17" y2="15" />
+      <line x1="17" y1="9" x2="23" y2="15" />
     </svg>
   );
 }
