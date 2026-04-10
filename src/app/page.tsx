@@ -478,7 +478,7 @@ function BuilderScreen({
 // SESSION SCREEN
 // ═══════════════════════════════════════════════
 function SessionScreen({
-  workout,
+  workout: initialWorkout,
   onComplete,
   onQuit,
 }: {
@@ -486,10 +486,12 @@ function SessionScreen({
   onComplete: (entry: CompletedWorkout) => void;
   onQuit: () => void;
 }) {
+  const [workout, setWorkout] = useState<Workout>(initialWorkout);
   const [tab, setTab] = useState<"live" | "exercises">("live");
   const [exerciseIdx, setExerciseIdx] = useState(0);
   const [setIdx, setSetIdx] = useState(0);
   const [isResting, setIsResting] = useState(false);
+  const [expandedExId, setExpandedExId] = useState<string | null>(null);
   const [totalTime, setTotalTime] = useState(0);
   const [setTime, setSetTime] = useState(0);
   const [soundOn, setSoundOn] = useState(() => {
@@ -520,6 +522,43 @@ function SessionScreen({
     audio.play().catch(() => {});
   }, [soundOn]);
 
+  // Edit helpers for mid-workout changes
+  const updateSessionSet = (exId: string, setId: string, field: "reps" | "weight", value: number) => {
+    setWorkout((prev) => ({
+      ...prev,
+      exercises: prev.exercises.map((ex) =>
+        ex.id === exId
+          ? { ...ex, sets: ex.sets.map((s) => (s.id === setId ? { ...s, [field]: value } : s)) }
+          : ex
+      ),
+    }));
+  };
+
+  const addSessionSet = (exId: string) => {
+    setWorkout((prev) => ({
+      ...prev,
+      exercises: prev.exercises.map((ex) => {
+        if (ex.id !== exId) return ex;
+        const lastSet = ex.sets[ex.sets.length - 1];
+        const ns: WorkoutSet = {
+          id: uuid(),
+          reps: lastSet ? lastSet.reps : 10,
+          weight: lastSet ? lastSet.weight : 0,
+        };
+        return { ...ex, sets: [...ex.sets, ns] };
+      }),
+    }));
+  };
+
+  const removeSessionSet = (exId: string, setId: string) => {
+    setWorkout((prev) => ({
+      ...prev,
+      exercises: prev.exercises.map((ex) =>
+        ex.id === exId ? { ...ex, sets: ex.sets.filter((s) => s.id !== setId) } : ex
+      ),
+    }));
+  };
+
   // Total timer
   useEffect(() => {
     const interval = setInterval(() => setTotalTime((t) => t + 1), 1000);
@@ -535,6 +574,13 @@ function SessionScreen({
   const currentExercise = workout.exercises[exerciseIdx];
   const currentSet = currentExercise?.sets[setIdx];
   const totalSets = currentExercise?.sets.length ?? 0;
+
+  // Compute next set info for REST display
+  const isLastSetOfExercise = setIdx >= totalSets - 1;
+  const nextExercise = isLastSetOfExercise ? workout.exercises[exerciseIdx + 1] : currentExercise;
+  const nextSet = isLastSetOfExercise ? nextExercise?.sets[0] : currentExercise?.sets[setIdx + 1];
+  const nextSetIdx = isLastSetOfExercise ? 0 : setIdx + 1;
+  const nextTotalSets = nextExercise?.sets.length ?? 0;
 
   const handleEndSet = useCallback(() => {
     setSetTime(0);
@@ -656,27 +702,33 @@ function SessionScreen({
             </div>
           </div>
 
-          {/* Current exercise card */}
+          {/* Current / Next exercise card */}
           <div className="w-full max-w-sm bg-bg-card rounded-xl p-4 mb-6">
-            <div className="flex items-center justify-between mb-3">
-              {isResting && <span className="text-xs text-accent font-semibold">Next</span>}
+            <div className="flex items-center gap-2 mb-3">
+              {isResting && <span className="text-xs text-accent font-semibold">Coming Next</span>}
               <p className="font-semibold text-lg flex-1">
-                {currentExercise.name}
+                {isResting ? (nextExercise?.name ?? currentExercise.name) : currentExercise.name}
               </p>
             </div>
             <div className="grid grid-cols-3 text-center">
               <div>
                 <p className="text-3xl font-bold">
-                  {setIdx + 1}/{totalSets}
+                  {isResting
+                    ? `${nextSetIdx + 1}/${nextTotalSets}`
+                    : `${setIdx + 1}/${totalSets}`}
                 </p>
                 <p className="text-xs text-gray-400 uppercase mt-1">Set</p>
               </div>
               <div>
-                <p className="text-3xl font-bold">{currentSet?.reps ?? 0}</p>
+                <p className="text-3xl font-bold">
+                  {isResting ? (nextSet?.reps ?? 0) : (currentSet?.reps ?? 0)}
+                </p>
                 <p className="text-xs text-gray-400 uppercase mt-1">Reps</p>
               </div>
               <div>
-                <p className="text-3xl font-bold">{currentSet?.weight ?? 0}</p>
+                <p className="text-3xl font-bold">
+                  {isResting ? (nextSet?.weight ?? 0) : (currentSet?.weight ?? 0)}
+                </p>
                 <p className="text-xs text-gray-400 uppercase mt-1">KG</p>
               </div>
             </div>
@@ -697,15 +749,16 @@ function SessionScreen({
           </div>
         </div>
       ) : (
-        /* Exercises tab */
+        /* Exercises tab — editable */
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-2">
           {workout.exercises.map((ex, idx) => {
             const isCurrent = idx === exerciseIdx;
             const isDone = idx < exerciseIdx;
+            const isExpanded = expandedExId === ex.id;
             return (
               <div
                 key={ex.id}
-                className={`rounded-xl p-4 ${
+                className={`rounded-xl overflow-hidden ${
                   isCurrent
                     ? "bg-accent/10 border border-accent/30"
                     : isDone
@@ -713,9 +766,12 @@ function SessionScreen({
                     : "bg-bg-card"
                 }`}
               >
-                <div className="flex items-center gap-3">
+                <div
+                  className="flex items-center gap-3 p-4 cursor-pointer"
+                  onClick={() => setExpandedExId(isExpanded ? null : ex.id)}
+                >
                   <div
-                    className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
+                    className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${
                       isDone
                         ? "bg-accent text-bg-primary"
                         : isCurrent
@@ -732,7 +788,57 @@ function SessionScreen({
                       {isCurrent && ` — Set ${setIdx + 1}/${totalSets}`}
                     </p>
                   </div>
+                  <span className="text-gray-400 text-xs">{isExpanded ? "▲" : "▼"}</span>
                 </div>
+
+                {/* Expanded: editable sets */}
+                {isExpanded && (
+                  <div className="px-3 pb-3 border-t border-white/5">
+                    <div className="flex items-center gap-2 mt-2 mb-2 text-xs text-gray-400 font-semibold uppercase">
+                      <div className="w-5 text-center">#</div>
+                      <div className="flex-1">Reps</div>
+                      <div className="flex-1">Weight (kg)</div>
+                      <div className="w-6" />
+                    </div>
+                    {ex.sets.map((s, sIdx) => (
+                      <div key={s.id} className="flex items-center gap-2 mb-2">
+                        <span className={`w-5 text-sm text-center shrink-0 ${
+                          isCurrent && sIdx === setIdx ? "text-accent font-bold" : "text-gray-400"
+                        }`}>{sIdx + 1}</span>
+                        <input
+                          type="number"
+                          value={s.reps}
+                          onChange={(e) =>
+                            updateSessionSet(ex.id, s.id, "reps", Math.max(0, parseInt(e.target.value) || 0))
+                          }
+                          className="flex-1 min-w-0 px-2 py-1.5 rounded-lg bg-bg-input text-white text-center outline-none text-sm"
+                        />
+                        <input
+                          type="number"
+                          value={s.weight}
+                          onChange={(e) =>
+                            updateSessionSet(ex.id, s.id, "weight", Math.max(0, parseFloat(e.target.value) || 0))
+                          }
+                          className="flex-1 min-w-0 px-2 py-1.5 rounded-lg bg-bg-input text-white text-center outline-none text-sm"
+                        />
+                        {ex.sets.length > 1 ? (
+                          <button
+                            onClick={() => removeSessionSet(ex.id, s.id)}
+                            className="w-6 shrink-0 text-gray-400 hover:text-danger transition-colors flex items-center justify-center"
+                          >
+                            <XIcon />
+                          </button>
+                        ) : <div className="w-6" />}
+                      </div>
+                    ))}
+                    <button
+                      onClick={() => addSessionSet(ex.id)}
+                      className="text-xs font-semibold text-gray-400 hover:text-white transition-colors flex items-center gap-1 mt-1"
+                    >
+                      ADD SET <span className="text-sm leading-none">+</span>
+                    </button>
+                  </div>
+                )}
               </div>
             );
           })}
