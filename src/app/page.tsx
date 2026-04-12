@@ -141,7 +141,8 @@ export default function App() {
     return (
       <SessionScreen
         workout={screen.workout}
-        onComplete={(entry) => {
+        onComplete={(entry, updatedWorkout) => {
+          saveWorkout(updatedWorkout);
           addToHistory(entry);
           refreshData();
           setScreen({ type: "completed" });
@@ -512,7 +513,7 @@ function SessionScreen({
   onQuit,
 }: {
   workout: Workout;
-  onComplete: (entry: CompletedWorkout) => void;
+  onComplete: (entry: CompletedWorkout, updatedWorkout: Workout) => void;
   onQuit: () => void;
 }) {
   const [workout, setWorkout] = useState<Workout>(initialWorkout);
@@ -520,6 +521,7 @@ function SessionScreen({
   const [exerciseIdx, setExerciseIdx] = useState(0);
   const [setIdx, setSetIdx] = useState(0);
   const [isResting, setIsResting] = useState(false);
+  const [showEndPrompt, setShowEndPrompt] = useState(false);
   const [expandedExId, setExpandedExId] = useState<string | null>(null);
   const [totalTime, setTotalTime] = useState(0);
   const [setTime, setSetTime] = useState(0);
@@ -619,14 +621,8 @@ function SessionScreen({
 
     if (isLastSet && isLastExercise) {
       playRandomSound();
-      onComplete({
-        id: uuid(),
-        workoutName: workout.name,
-        exercises: workout.exercises,
-        startedAt: startedAtRef.current,
-        completedAt: new Date().toISOString(),
-        totalDurationSeconds: totalTime,
-      });
+      setIsResting(false);
+      setShowEndPrompt(true);
       return;
     }
 
@@ -645,7 +641,45 @@ function SessionScreen({
     }
   }, [setIdx, totalSets, exerciseIdx, workout, isResting, onComplete, totalTime, playRandomSound]);
 
+  const confirmComplete = () => {
+    onComplete(
+      {
+        id: uuid(),
+        workoutName: workout.name,
+        exercises: workout.exercises,
+        startedAt: startedAtRef.current,
+        completedAt: new Date().toISOString(),
+        totalDurationSeconds: totalTime,
+      },
+      workout
+    );
+  };
+
   if (!currentExercise) return null;
+
+  if (showEndPrompt) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-bg-primary px-6 text-center">
+        <div className="text-5xl mb-6">&#127947;</div>
+        <h1 className="text-2xl font-bold text-white mb-2">End Workout?</h1>
+        <p className="text-gray-400 mb-8">All changes to exercises will be saved.</p>
+        <div className="flex gap-4 w-full max-w-xs">
+          <button
+            onClick={() => setShowEndPrompt(false)}
+            className="flex-1 py-4 rounded-xl bg-bg-card text-white font-semibold text-lg"
+          >
+            No
+          </button>
+          <button
+            onClick={confirmComplete}
+            className="flex-1 py-4 rounded-xl bg-accent text-bg-primary font-bold text-lg"
+          >
+            Yes
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col min-h-screen bg-bg-primary">
