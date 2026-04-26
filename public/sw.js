@@ -1,5 +1,5 @@
 // Service Worker for Adrian's Muscle Plan - offline support
-const CACHE_NAME = "adrian-muscle-plan-v3";
+const CACHE_NAME = "adrian-muscle-plan-v4";
 const STATIC_ASSETS = [
   "/",
   "/manifest.webmanifest",
@@ -12,47 +12,19 @@ const STATIC_ASSETS = [
   "/sounds/6.mpeg",
 ];
 
-// On install, precache static assets AND parse the homepage to discover
-// and cache all _next chunked JS/CSS so the app works offline immediately.
 self.addEventListener("install", (event) => {
   event.waitUntil(
     (async () => {
       const cache = await caches.open(CACHE_NAME);
-      // Precache static assets
+      // Precache static assets — best-effort
       await Promise.all(
         STATIC_ASSETS.map((url) =>
-          cache
-            .add(new Request(url, { cache: "reload" }))
-            .catch(() => undefined)
+          cache.add(new Request(url, { cache: "reload" })).catch(() => undefined)
         )
       );
-      // Fetch the homepage and discover chunked assets
-      try {
-        const resp = await fetch("/", { cache: "reload" });
-        if (resp.ok) {
-          const text = await resp.text();
-          const matches = text.match(/\/_next\/[^"'\s)]+\.(?:js|css|woff2?|ttf)/g) || [];
-          const unique = Array.from(new Set(matches));
-          await Promise.all(
-            unique.map((url) =>
-              cache
-                .add(new Request(url, { cache: "reload" }))
-                .catch(() => undefined)
-            )
-          );
-        }
-      } catch {
-        // Best-effort
-      }
       self.skipWaiting();
     })()
   );
-});
-
-self.addEventListener("message", (event) => {
-  if (event.data && event.data.type === "SKIP_WAITING") {
-    self.skipWaiting();
-  }
 });
 
 self.addEventListener("activate", (event) => {
@@ -67,45 +39,72 @@ self.addEventListener("activate", (event) => {
   );
 });
 
+// Listen for messages from the page to cache additional URLs
+self.addEventListener("message", (event) => {
+  if (!event.data) return;
+  if (event.data.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  } else if (event.data.type === "CACHE_URLS") {
+    const urls = event.data.urls || [];
+    event.waitUntil(
+      caches.open(CACHE_NAME).then((cache) =>
+        Promise.all(
+          urls.map((url) =>
+            cache.add(new Request(url, { cache: "no-store" })).catch(() => undefined)
+          )
+        )
+      )
+    );
+  }
+});
+
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
 
-  // Navigation: network-first, fallback to cached "/"
+  // Navigation: try network, fall back to cached "/"
   if (req.mode === "navigate" || req.destination === "document") {
     event.respondWith(
-      fetch(req)
-        .then((resp) => {
-          const copy = resp.clone();
-          caches
-            .open(CACHE_NAME)
-            .then((c) => c.put("/", copy))
-            .catch(() => {});
+      (async () => {
+        try {
+          const resp = await fetch(req);
+          const cache = await caches.open(CACHE_NAME);
+          cache.put("/", resp.clone()).catch(() => {});
           return resp;
-        })
-        .catch(() =>
-          caches.match(req).then((cached) => cached || caches.match("/"))
-        )
+        } catch {
+          const cached = await caches.match(req);
+          return cached || (await caches.match("/")) || Response.error();
+        }
+      })()
     );
     return;
   }
 
-  // Other assets: stale-while-revalidate
+  // Static assets: cache-first, then network, populate cache
   event.respondWith(
-    caches.open(CACHE_NAME).then((cache) =>
-      cache.match(req).then((cached) => {
-        const fetchPromise = fetch(req)
+    (async () => {
+      const cache = await caches.open(CACHE_NAME);
+      const cached = await cache.match(req);
+      if (cached) {
+        // Refresh in background
+        fetch(req)
           .then((resp) => {
-            if (resp && resp.status === 200) {
-              cache.put(req, resp.clone()).catch(() => {});
-            }
-            return resp;
+            if (resp && resp.status === 200) cache.put(req, resp.clone()).catch(() => {});
           })
-          .catch(() => cached);
-        return cached || fetchPromise;
-      })
-    )
+          .catch(() => {});
+        return cached;
+      }
+      try {
+        const resp = await fetch(req);
+        if (resp && resp.status === 200) {
+          cache.put(req, resp.clone()).catch(() => {});
+        }
+        return resp;
+      } catch {
+        return Response.error();
+      }
+    })()
   );
 });

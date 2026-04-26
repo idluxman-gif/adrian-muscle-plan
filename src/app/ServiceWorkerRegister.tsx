@@ -7,26 +7,57 @@ export default function ServiceWorkerRegister() {
     if (typeof window === "undefined") return;
     if (!("serviceWorker" in navigator)) return;
 
+    const cacheLoadedResources = () => {
+      try {
+        const ctrl = navigator.serviceWorker.controller;
+        if (!ctrl) return;
+        const entries = performance.getEntriesByType(
+          "resource"
+        ) as PerformanceResourceTiming[];
+        const urls = entries
+          .map((e) => e.name)
+          .filter((u) => {
+            try {
+              const parsed = new URL(u);
+              if (parsed.origin !== window.location.origin) return false;
+              // Only cache static assets
+              return (
+                /\/_next\//.test(parsed.pathname) ||
+                /\.(?:js|css|woff2?|ttf|svg|png|jpg|jpeg|webp|mpeg|mp3|wav|ogg|ico)$/i.test(
+                  parsed.pathname
+                )
+              );
+            } catch {
+              return false;
+            }
+          });
+        if (urls.length > 0) {
+          ctrl.postMessage({ type: "CACHE_URLS", urls });
+        }
+      } catch {
+        // ignore
+      }
+    };
+
     const register = async () => {
       try {
-        const reg = await navigator.serviceWorker.register("/sw.js", {
+        await navigator.serviceWorker.register("/sw.js", {
           updateViaCache: "none",
         });
-        // Check for updates whenever the page loads
-        reg.update().catch(() => {});
-
-        // If there's a waiting worker, tell it to take over now
-        if (reg.waiting) {
-          reg.waiting.postMessage({ type: "SKIP_WAITING" });
+        // After registration, ask SW to cache everything the page loaded.
+        // Wait until controller is available so messages reach the SW.
+        if (navigator.serviceWorker.controller) {
+          cacheLoadedResources();
+        } else {
+          navigator.serviceWorker.addEventListener(
+            "controllerchange",
+            () => {
+              // Once controlled, cache the loaded resources
+              cacheLoadedResources();
+            },
+            { once: true }
+          );
         }
-
-        // Reload once when a new SW takes control (so the user sees the update)
-        let refreshing = false;
-        navigator.serviceWorker.addEventListener("controllerchange", () => {
-          if (refreshing) return;
-          refreshing = true;
-          window.location.reload();
-        });
       } catch {
         // Silent failure — app still works online
       }
