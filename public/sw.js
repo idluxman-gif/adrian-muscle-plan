@@ -1,8 +1,9 @@
 // Service Worker for Adrian's Muscle Plan - offline support
-const CACHE_NAME = "adrian-muscle-plan-v2";
-const CORE_ASSETS = [
+const CACHE_NAME = "adrian-muscle-plan-v3";
+const STATIC_ASSETS = [
   "/",
-  "/manifest.json",
+  "/manifest.webmanifest",
+  "/icon.svg",
   "/sounds/1.mpeg",
   "/sounds/2.mpeg",
   "/sounds/3.mpeg",
@@ -11,48 +12,77 @@ const CORE_ASSETS = [
   "/sounds/6.mpeg",
 ];
 
+// On install, precache static assets AND parse the homepage to discover
+// and cache all _next chunked JS/CSS so the app works offline immediately.
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) =>
-      cache.addAll(CORE_ASSETS).catch(() => {
-        // Tolerate missing assets during install
-      })
-    )
+    (async () => {
+      const cache = await caches.open(CACHE_NAME);
+      // Precache static assets
+      await Promise.all(
+        STATIC_ASSETS.map((url) =>
+          cache
+            .add(new Request(url, { cache: "reload" }))
+            .catch(() => undefined)
+        )
+      );
+      // Fetch the homepage and discover chunked assets
+      try {
+        const resp = await fetch("/", { cache: "reload" });
+        if (resp.ok) {
+          const text = await resp.text();
+          const matches = text.match(/\/_next\/[^"'\s)]+\.(?:js|css|woff2?|ttf)/g) || [];
+          const unique = Array.from(new Set(matches));
+          await Promise.all(
+            unique.map((url) =>
+              cache
+                .add(new Request(url, { cache: "reload" }))
+                .catch(() => undefined)
+            )
+          );
+        }
+      } catch {
+        // Best-effort
+      }
+      self.skipWaiting();
+    })()
   );
-  self.skipWaiting();
+});
+
+self.addEventListener("message", (event) => {
+  if (event.data && event.data.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
 });
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches
-      .keys()
-      .then((keys) =>
-        Promise.all(
-          keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k))
-        )
-      )
-      .then(() => self.clients.claim())
+    (async () => {
+      const keys = await caches.keys();
+      await Promise.all(
+        keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k))
+      );
+      await self.clients.claim();
+    })()
   );
 });
 
-// Network-first for navigation (HTML), cache-first for other assets.
-// This way, when online the user always gets the latest app,
-// but when offline the cached version works.
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
-
   const url = new URL(req.url);
-  // Only handle same-origin
   if (url.origin !== self.location.origin) return;
 
-  // Navigation / HTML: network-first, fallback to cache
+  // Navigation: network-first, fallback to cached "/"
   if (req.mode === "navigate" || req.destination === "document") {
     event.respondWith(
       fetch(req)
         .then((resp) => {
           const copy = resp.clone();
-          caches.open(CACHE_NAME).then((c) => c.put(req, copy)).catch(() => {});
+          caches
+            .open(CACHE_NAME)
+            .then((c) => c.put("/", copy))
+            .catch(() => {});
           return resp;
         })
         .catch(() =>
@@ -62,19 +92,20 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Other assets: cache-first, fallback to network, then fill cache
+  // Other assets: stale-while-revalidate
   event.respondWith(
-    caches.match(req).then((cached) => {
-      if (cached) return cached;
-      return fetch(req)
-        .then((resp) => {
-          if (resp && resp.status === 200 && resp.type === "basic") {
-            const copy = resp.clone();
-            caches.open(CACHE_NAME).then((c) => c.put(req, copy)).catch(() => {});
-          }
-          return resp;
-        })
-        .catch(() => cached);
-    })
+    caches.open(CACHE_NAME).then((cache) =>
+      cache.match(req).then((cached) => {
+        const fetchPromise = fetch(req)
+          .then((resp) => {
+            if (resp && resp.status === 200) {
+              cache.put(req, resp.clone()).catch(() => {});
+            }
+            return resp;
+          })
+          .catch(() => cached);
+        return cached || fetchPromise;
+      })
+    )
   );
 });
